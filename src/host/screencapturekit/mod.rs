@@ -1,4 +1,4 @@
-use std::{cell::RefCell, rc::Rc, time::Duration};
+use std::{sync::{Arc, Mutex}, time::Duration};
 
 use crate::{
     traits::{DeviceTrait, HostTrait, StreamTrait},
@@ -236,20 +236,20 @@ struct StreamInner {
 
 #[derive(Clone)]
 pub struct Stream {
-    inner: Rc<RefCell<StreamInner>>,
+    inner: Arc<Mutex<StreamInner>>,
 }
 
 impl Stream {
     fn new(inner: StreamInner) -> Self {
         Self {
-            inner: Rc::new(RefCell::new(inner)),
+            inner: Arc::new(Mutex::new(inner)),
         }
     }
 }
 
 impl StreamTrait for Stream {
     fn play(&self) -> Result<(), PlayStreamError> {
-        let mut stream = self.inner.borrow_mut();
+        let mut stream = self.inner.lock().unwrap();
         if !stream.playing {
             let (tx, rx) = std::sync::mpsc::channel();
             stream.sc_stream.start_with_ch(move |e| {
@@ -269,7 +269,7 @@ impl StreamTrait for Stream {
     }
 
     fn pause(&self) -> Result<(), PauseStreamError> {
-        let mut stream = self.inner.borrow_mut();
+        let mut stream = self.inner.lock().unwrap();
         if stream.playing {
             let (tx, rx) = std::sync::mpsc::channel();
             stream.sc_stream.stop_with_ch(move |e| {
