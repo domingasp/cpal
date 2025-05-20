@@ -1,3 +1,5 @@
+#[cfg(target_os = "android")]
+pub(crate) mod aaudio;
 #[cfg(any(
     target_os = "linux",
     target_os = "dragonfly",
@@ -22,8 +24,6 @@ pub(crate) mod emscripten;
 ))]
 pub(crate) mod jack;
 pub(crate) mod null;
-#[cfg(target_os = "android")]
-pub(crate) mod oboe;
 #[cfg(target_os = "macos")]
 pub(crate) mod screencapturekit;
 #[cfg(windows)]
