@@ -11,7 +11,7 @@ use crate::{
 use cidre::{
     arc::Retained,
     cm, define_obj_type, dispatch, ns, objc,
-    sc::{self, StreamOutput, StreamOutputImpl},
+    sc::{self, StreamDelegate, StreamDelegateImpl, StreamOutput, StreamOutputImpl},
 };
 pub use enumerate::{
     default_input_device, default_output_device, Devices, SupportedInputConfigs,
@@ -96,9 +96,9 @@ impl DeviceTrait for Device {
         error_callback: E,
         _timeout: Option<std::time::Duration>,
     ) -> Result<Self::Stream, BuildStreamError>
-    where
-        D: FnMut(&Data, &InputCallbackInfo) + Send + 'static,
-        E: FnMut(StreamError) + Send + 'static,
+        where
+            D: FnMut(&Data, &InputCallbackInfo) + Send + 'static,
+            E: FnMut(StreamError) + Send + 'static,
     {
         Self::build_input_stream(self, config, sample_format, data_callback, error_callback)
     }
@@ -111,9 +111,9 @@ impl DeviceTrait for Device {
         error_callback: E,
         timeout: Option<Duration>,
     ) -> Result<Self::Stream, BuildStreamError>
-    where
-        D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
-        E: FnMut(StreamError) + Send + 'static,
+        where
+            D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
+            E: FnMut(StreamError) + Send + 'static,
     {
         Self::build_output_stream(
             self,
@@ -179,9 +179,9 @@ impl Device {
         data_callback: D,
         error_callback: E,
     ) -> Result<Stream, BuildStreamError>
-    where
-        D: FnMut(&Data, &InputCallbackInfo) + Send + 'static,
-        E: FnMut(StreamError) + Send + 'static,
+        where
+            D: FnMut(&Data, &InputCallbackInfo) + Send + 'static,
+            E: FnMut(StreamError) + Send + 'static,
     {
         let queue = dispatch::Queue::serial_with_ar_pool();
         let mut cfg = sc::StreamCfg::new();
@@ -189,7 +189,6 @@ impl Device {
         cfg.set_excludes_current_process_audio(false);
         let windows = ns::Array::new();
         let filter = sc::ContentFilter::with_display_excluding_windows(&self.display, &windows);
-        let sc_stream = sc::Stream::new(&filter, &cfg);
         let inner = CapturerInner {
             current_data: vec![],
             config: config.clone(),
@@ -198,6 +197,7 @@ impl Device {
             error_callback: Box::new(error_callback),
         };
         let capturer = Capturer::with(inner);
+        let sc_stream = sc::Stream::with_delegate(&filter, &cfg, capturer.as_ref());
         sc_stream
             .add_stream_output(capturer.as_ref(), sc::OutputType::Audio, Some(&queue))
             .map_err(|e| BackendSpecificError {
@@ -205,9 +205,9 @@ impl Device {
             })?;
 
         Ok(Stream::new(StreamInner {
-            _capturer: capturer,
-            sc_stream,
-            playing: false,
+                _capturer: capturer,
+                sc_stream,
+                playing: false,
         }))
     }
 
@@ -219,9 +219,9 @@ impl Device {
         _error_callback: E,
         _timeout: Option<Duration>,
     ) -> Result<Stream, BuildStreamError>
-    where
-        D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
-        E: FnMut(StreamError) + Send + 'static,
+        where
+            D: FnMut(&mut Data, &OutputCallbackInfo) + Send + 'static,
+            E: FnMut(StreamError) + Send + 'static,
     {
         Err(BuildStreamError::StreamConfigNotSupported)
     }
@@ -350,7 +350,7 @@ impl CapturerInner {
     }
 }
 
-define_obj_type!(Capturer + StreamOutputImpl, CapturerInner, CAPTURER);
+define_obj_type!(Capturer + StreamOutputImpl + StreamDelegateImpl, CapturerInner, CAPTURER);
 
 impl StreamOutput for Capturer {}
 
@@ -367,6 +367,26 @@ impl StreamOutputImpl for Capturer {
             sc::OutputType::Audio => self.inner_mut().handle_audio(sample_buf),
             _ => {}
         }
+    }
+}
+
+impl StreamDelegate for Capturer {}
+
+#[objc::add_methods]
+impl StreamDelegateImpl for Capturer {
+    extern "C" fn impl_stream_did_stop_with_err(
+        &mut self,
+        _cmd: Option<&objc::Sel>,
+        _stream: &sc::Stream,
+        error: &ns::Error
+    ) {
+        let description = error.localized_description();
+
+        (self.inner_mut().error_callback)(StreamError::BackendSpecific {
+            err: BackendSpecificError {
+                description: description.to_string(),
+            },
+        });
     }
 }
 
